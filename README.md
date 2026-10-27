@@ -34,3 +34,14 @@ Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2 (async) + Alembic, pyvips, Redi
 authorization cache). Tooling: uv, ruff, mypy (strict), pytest.
 
 Code from `crag-radar-back` (on-demand DeepZoom tiler, storage repositories) is meant to move here.
+
+## Develop
+
+Nothing is installed on the laptop. Two complementary ways to work, both using the `dev` stage of
+the `Dockerfile`:
+
+- **Run:** `tilt up` from the umbrella `cragradar` repository runs this app in the local cluster and
+  syncs code edits into the running container.
+- **Edit:** open this folder in VS Code and choose **Reopen in Container** for autocompletion,
+  type checking and tests in the editor. Tests, ruff and mypy also run from the `checks` button in the Tilt
+  dashboard.

@@ -2,7 +2,10 @@
 
 from fastapi import FastAPI
 
+from cragradar_backend.api import authz
+
 app: FastAPI = FastAPI(title="CragRadar API", docs_url="/api/docs", openapi_url="/api/openapi.json")
+app.include_router(authz.router)
 
 
 @app.get("/api/healthz")

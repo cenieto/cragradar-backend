@@ -1,7 +1,7 @@
 """Authorization of tile requests, called by the nginx tile cache through ``auth_request``.
 
-nginx caches each answer for a short time per token and image, so this endpoint is not called for
-every tile.
+nginx caches each answer for a short time per token and image, so this endpoint is not called
+for every tile.
 """
 
 from typing import Annotated
@@ -9,14 +9,21 @@ from typing import Annotated
 import jwt
 from fastapi import APIRouter, Depends, Header, Response, status
 
-from cragradar_backend.core.security import AccessTokenVerifier, get_token_verifier
+from cragradar_backend.core.security import (
+    AccessTokenVerifier,
+    get_token_verifier,
+    read_bearer_token,
+)
 
 router: APIRouter = APIRouter(prefix="/api/authz", tags=["authz"])
 
-BEARER_PREFIX: str = "Bearer "
-
 
 def reject_as_unauthenticated() -> Response:
+    """Build the answer to a missing or invalid token.
+
+    Returns:
+        Response: 401 with ``WWW-Authenticate: Bearer``.
+    """
     return Response(
         status_code=status.HTTP_401_UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"}
     )
@@ -27,13 +34,22 @@ def authorize_tile_request(
     token_verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)],
     authorization: Annotated[str | None, Header()] = None,
 ) -> Response:
-    """204 grants access to the tile, 401 rejects a missing or invalid token."""
-    has_bearer_token: bool = authorization is not None and authorization.startswith(BEARER_PREFIX)
-    if not has_bearer_token or authorization is None:
+    """Grant or reject a tile request.
+
+    Args:
+        token_verifier: Verifier of access tokens.
+        authorization: ``Authorization`` header of the tile request.
+
+    Returns:
+        Response: 204 grants access, 401 rejects a missing or invalid token, 503 tells that
+            the signing keys cannot be fetched.
+    """
+    token: str | None = read_bearer_token(authorization=authorization)
+    is_token_missing: bool = token is None
+    if is_token_missing:
         return reject_as_unauthenticated()
-    token: str = authorization.removeprefix(BEARER_PREFIX)
     try:
-        token_verifier.verify(token)
+        token_verifier.verify(str(token))
     except jwt.PyJWKClientConnectionError:
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
     except jwt.PyJWTError:

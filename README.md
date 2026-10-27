@@ -7,33 +7,53 @@ Deployment manifests live in `cragradar-backend-service`, not here.
 
 The same package runs as three processes, each with its own entrypoint:
 
-| Process | Role |
-| --- | --- |
-| `api` | Admin, content, locations and annotation endpoints. Also `/authz`, called by the nginx tile cache to authorize every tile request. |
-| `tiles` | Read-only DeepZoom tile endpoint. Cuts tiles on the fly with pyvips from the pyramidal TIFF of each image. |
-| `worker` | Background jobs: converts each uploaded image to a pyramidal tiled TIFF once. |
+| Process | Entrypoint | Role |
+| --- | --- | --- |
+| `api` | `uvicorn cragradar_backend.api.main:app` | Resumable uploads (tus) under `/api/uploads`, images under `/api/images`, and `/api/authz/tiles`, called by the nginx tile cache to authorize every tile request. |
+| `tiles` | `uvicorn cragradar_backend.tiles.main:app` | Deep Zoom descriptor and tiles of ready images, cut on the fly by pyvips from their pyramidal TIFF: `/tiles/<id>/v<version>/image.dzi`. |
+| `worker` | `cragradar-worker` | Converts each complete upload once to a pyramidal tiled TIFF, then stores the original and the pyramid. |
 
-## Planned layout
+`cragradar-migrate` runs Alembic on the packaged migrations, with the arguments of the `alembic`
+command (`upgrade head`, `revision --autogenerate -m "..."`).
+
+## Image lifecycle
+
+`uploading` (tus chunks arriving) → `uploaded` (queued) → `processing` (a worker holds its lease)
+→ `ready` (tiles served) or `failed` (`error` tells why). The `images` table is the job queue.
+
+## Configuration
+
+pydantic-settings (`cragradar_backend.core.settings`), from highest to lowest priority:
+
+1. `CRAGRADAR_*` environment variables, nested with `__`, such as `CRAGRADAR_OIDC__ISSUER` and
+   `CRAGRADAR_DATABASE__URL`.
+2. The YAML file named by `CRAGRADAR_SETTINGS_FILE`, mounted from the `backend-settings`
+   ConfigMap of `cragradar-backend-service`.
+
+`repository` and `tiler` are built by `racker` from their `type:` configuration, as in
+`crag-radar-back`, and are only read from the file.
+
+## Layout
 
 ```
 src/cragradar_backend/
-  core/       settings, database, JWT validation against the Keycloak JWKS
-  storage/    storage interface: local filesystem now, S3 later (selected by config)
-  models/     SQLAlchemy models (PostgreSQL + PostGIS)
-  schemas/    Pydantic models of the API
-  api/        routers: admin, users, tags, locations, images, annotations, locks, authz
+  racker/     class <-> config registry (from crag-radar-back)
+  repos/      file repositories and path generators (from crag-radar-back)
+  tiler/      Deep Zoom tiler (from crag-radar-back)
+  core/       settings, database, token validation, cragradar-migrate
+  models/     SQLAlchemy models
+  api/        routers: authz, uploads (tus), images
   tiles/      tile ASGI app
-  worker/     ingest jobs
-migrations/   Alembic
-test/
+  ingest/     pyramid builder, staging paths
+  worker/     job queue and entrypoint
+  migrations/ Alembic
+test/         mirrors src/; uses SQLite, so it runs without PostgreSQL
 ```
 
 ## Stack
 
-Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2 (async) + Alembic, pyvips, Redis (job queue and
-authorization cache). Tooling: uv, ruff, mypy (strict), pytest.
-
-Code from `crag-radar-back` (on-demand DeepZoom tiler, storage repositories) is meant to move here.
+Python 3.12+, FastAPI, Pydantic v2, pydantic-settings, SQLAlchemy 2 (async, asyncpg) + Alembic,
+PyJWT, pyvips. Tooling: uv, ruff, mypy (strict, on `src`), pytest.
 
 ## Develop
 

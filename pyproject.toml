@@ -9,27 +9,54 @@ description = "CragRadar backend: API, on-demand tile server and ingest worker."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.14",
+    "asyncpg>=0.30",
     "fastapi>=0.115",
     "pydantic>=2.10",
-    "pydantic-settings>=2.6",
+    "pydantic-settings[yaml]>=2.6",
     "pyjwt[crypto]>=2.10",
     "pyvips[binary]>=2.2.2",
+    "sqlalchemy[asyncio]>=2.0.36",
     "uvicorn[standard]>=0.32",
 ]
+
+[project.scripts]
+cragradar-migrate = "cragradar_backend.core.migrate:main"
+cragradar-worker = "cragradar_backend.worker.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+cragradar_backend = ["migrations/*.py", "migrations/*.mako", "migrations/versions/*.py"]
+
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.20",
     "httpx2>=2.14",
     "mypy>=1.13",
     "pytest>=8.3",
     "ruff>=0.8",
 ]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["test"]
+norecursedirs = [".*", "fixtures", "tmp", "__pycache__"]  # fixtures hold input data, not tests
+
 [tool.ruff]
 line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]  # pycodestyle, pyflakes, isort, pyupgrade, bugbear, simplify
+ignore = ["UP046"]  # racker keeps Generic[...]: PEP 695 rewrite of pydantic generics is unsafe
 
 [tool.mypy]
 strict = true
+mypy_path = "src"
+disable_error_code = ["type-abstract"]  # racker base classes are usually abstract
+
+[[tool.mypy.overrides]]
+module = "pyvips.*"
+ignore_missing_imports = true  # pyvips ships no type stubs

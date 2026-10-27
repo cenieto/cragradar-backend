@@ -21,8 +21,9 @@ COPY --chown=app pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/home/app/.cache/uv,uid=1000 uv sync --frozen --no-install-project
 COPY --chown=app . .
 RUN --mount=type=cache,target=/home/app/.cache/uv,uid=1000 uv sync --frozen
-# uvicorn reads its options from UVICORN_* variables: dev images reload on code changes.
-ENV UVICORN_RELOAD=true UVICORN_RELOAD_DIRS=/app/src
+# Dev images restart on code changes: uvicorn reads UVICORN_* variables, the worker
+# WORKER_RELOAD.
+ENV UVICORN_RELOAD=true UVICORN_RELOAD_DIRS=/app/src WORKER_RELOAD=true
 CMD ["uvicorn", "cragradar_backend.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS prod

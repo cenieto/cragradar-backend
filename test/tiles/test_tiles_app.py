@@ -1,5 +1,6 @@
 """Deep Zoom descriptor and tiles of ready images."""
 
+import asyncio
 import uuid
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
@@ -14,6 +15,8 @@ from test.conftest import ingest_upload, queue_upload, write_gradient
 
 from cragradar_backend.core.settings import Settings
 from cragradar_backend.tiler.deepzoom import DEEP_ZOOM_NAMESPACE
+from cragradar_backend.tiles.cache import PhysicalPyramidPathCache, get_path_cache
+from cragradar_backend.tiles.main import app
 
 
 @pytest.fixture
@@ -80,3 +83,16 @@ def test_image_not_ready_is_not_served(
 def test_unknown_image_is_not_served(tiles_client: TestClient) -> None:
     """Check that an unknown image is answered 404."""
     assert tiles_client.get(f"/tiles/{uuid.uuid4()}/v1/image.dzi").status_code == 404
+
+
+def test_pyramid_path_is_read_from_the_injected_cache(
+    tiles_client: TestClient, ready_image_id: uuid.UUID
+) -> None:
+    """Check that the first request fills the cache given by ``get_path_cache``."""
+    path_cache: PhysicalPyramidPathCache = app.dependency_overrides[get_path_cache]()
+
+    tiles_client.get(f"/tiles/{ready_image_id}/v1/image.dzi")
+
+    cached_path: Path | None = asyncio.run(path_cache.get(image_id=ready_image_id, version=1))
+    assert cached_path is not None
+    assert cached_path.name == f"{ready_image_id}.pyramid.tif"

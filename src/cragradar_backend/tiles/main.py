@@ -11,7 +11,6 @@ carry no ``Cache-Control``: nginx sets the one the browser sees.
 """
 
 import uuid
-from collections import OrderedDict
 from pathlib import Path
 from typing import Annotated
 
@@ -26,66 +25,9 @@ from cragradar_backend.repos.abcs import RepositoryAbstract
 from cragradar_backend.repos.errors import StoredFileNotFoundError
 from cragradar_backend.tiler.abcs import TilerAbstract
 from cragradar_backend.tiler.errors import TileNotFoundError, UnreadableImageError
-
-PYRAMID_PATH_CACHE_SIZE: int = 4096
+from cragradar_backend.tiles.cache import PyramidPathCache, get_path_cache
 
 app: FastAPI = FastAPI(title="CragRadar tiles", docs_url=None, redoc_url=None, openapi_url=None)
-
-
-class PyramidPathCache:
-    """Physical paths of pyramids, by image and version, with the oldest entries dropped.
-
-    A version of an image never changes its pyramid, so entries never go stale.
-    """
-
-    def __init__(
-        self,
-        max_entries: int,
-    ) -> None:
-        """Create an empty cache.
-
-        Args:
-            max_entries: Number of paths kept.
-        """
-        self.max_entries: int = max_entries
-        self._paths: OrderedDict[tuple[uuid.UUID, int], Path] = OrderedDict()
-
-    def get(
-        self,
-        image_id: uuid.UUID,
-        version: int,
-    ) -> Path | None:
-        """Get a cached path.
-
-        Args:
-            image_id: Image of the pyramid.
-            version: Version of the pyramid.
-
-        Returns:
-            Path | None: The path, or ``None`` if it is not cached.
-        """
-        return self._paths.get((image_id, version))
-
-    def put(
-        self,
-        image_id: uuid.UUID,
-        version: int,
-        pyramid_path: Path,
-    ) -> None:
-        """Cache a path, dropping the oldest one when full.
-
-        Args:
-            image_id: Image of the pyramid.
-            version: Version of the pyramid.
-            pyramid_path: Physical path of the pyramid.
-        """
-        self._paths[(image_id, version)] = pyramid_path
-        is_full: bool = len(self._paths) > self.max_entries
-        if is_full:
-            self._paths.popitem(last=False)
-
-
-pyramid_path_cache: PyramidPathCache = PyramidPathCache(max_entries=PYRAMID_PATH_CACHE_SIZE)
 
 
 async def resolve_pyramid_path(
@@ -93,6 +35,7 @@ async def resolve_pyramid_path(
     version: int,
     session: AsyncSession,
     repository: RepositoryAbstract,
+    path_cache: PyramidPathCache,
 ) -> Path:
     """Get the physical path of the pyramid of a ready image version.
 
@@ -101,6 +44,7 @@ async def resolve_pyramid_path(
         version: Requested version; only the current version of a ready image is served.
         session: Database session, used when the path is not cached.
         repository: Repository that stores the pyramids.
+        path_cache: Cache of pyramid paths, read first and filled after a database lookup.
 
     Returns:
         Path: Physical path of the pyramid.
@@ -109,7 +53,7 @@ async def resolve_pyramid_path(
         HTTPException: 404 if the image does not exist, is not ready, or is at another
             version.
     """
-    cached_path: Path | None = pyramid_path_cache.get(image_id=image_id, version=version)
+    cached_path: Path | None = await path_cache.get(image_id=image_id, version=version)
     if cached_path is not None:
         return cached_path
 
@@ -129,7 +73,7 @@ async def resolve_pyramid_path(
         )
     except StoredFileNotFoundError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pyramid not stored") from error
-    pyramid_path_cache.put(image_id=image_id, version=version, pyramid_path=pyramid_path)
+    await path_cache.put(image_id=image_id, version=version, pyramid_path=pyramid_path)
     return pyramid_path
 
 
@@ -149,6 +93,7 @@ async def describe_image(
     version: int,
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
+    path_cache: Annotated[PyramidPathCache, Depends(get_path_cache)],
 ) -> Response:
     """Return the Deep Zoom descriptor of an image, to give to OpenSeadragon.
 
@@ -157,6 +102,7 @@ async def describe_image(
         version: Pyramid version.
         session: Database session.
         settings: Settings of the backend.
+        path_cache: Cache of pyramid paths.
 
     Returns:
         Response: The ``.dzi`` XML document.
@@ -167,7 +113,11 @@ async def describe_image(
     """
     tiler: TilerAbstract = settings.tiler
     pyramid_path: Path = await resolve_pyramid_path(
-        image_id=image_id, version=version, session=session, repository=settings.repository
+        image_id=image_id,
+        version=version,
+        session=session,
+        repository=settings.repository,
+        path_cache=path_cache,
     )
     try:
         descriptor: str = await run_in_threadpool(tiler.describe, image_path=pyramid_path)
@@ -190,6 +140,7 @@ async def get_tile(
     extension: str,
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
+    path_cache: Annotated[PyramidPathCache, Depends(get_path_cache)],
 ) -> Response:
     """Cut one Deep Zoom tile of an image.
 
@@ -202,6 +153,7 @@ async def get_tile(
         extension: Tile format, which must match the configured one.
         session: Database session.
         settings: Settings of the backend.
+        path_cache: Cache of pyramid paths.
 
     Returns:
         Response: The encoded tile.
@@ -216,7 +168,11 @@ async def get_tile(
     if not is_configured_extension:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tiles are not served in that format")
     pyramid_path: Path = await resolve_pyramid_path(
-        image_id=image_id, version=version, session=session, repository=settings.repository
+        image_id=image_id,
+        version=version,
+        session=session,
+        repository=settings.repository,
+        path_cache=path_cache,
     )
     try:
         tile: bytes = await run_in_threadpool(

@@ -20,6 +20,7 @@ from cragradar_backend.core.database import get_session
 from cragradar_backend.core.security import AccessTokenVerifier, get_token_verifier
 from cragradar_backend.core.settings import Settings, get_settings
 from cragradar_backend.models import Base
+from cragradar_backend.tiles.cache import PhysicalPyramidPathCache, get_path_cache
 from test.config import TMP_DIR
 
 ISSUER: str = "http://cragradar.test/auth/realms/cragradar"
@@ -117,7 +118,7 @@ def override_dependencies(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Make an app use the test settings, database and signing key."""
+    """Make an app use the test settings, database, signing key and a fresh path cache."""
 
     async def get_test_session() -> AsyncIterator[AsyncSession]:
         """Give a session on the test database."""
@@ -127,9 +128,11 @@ def override_dependencies(
     test_verifier: AccessTokenVerifier = AccessTokenVerifier(
         issuer=ISSUER, audience=AUDIENCE, resolve_signing_key=lambda token: signing_public_jwk
     )
+    test_path_cache: PhysicalPyramidPathCache = PhysicalPyramidPathCache(max_entries=16)
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_session] = get_test_session
     app.dependency_overrides[get_token_verifier] = lambda: test_verifier
+    app.dependency_overrides[get_path_cache] = lambda: test_path_cache
 
 
 @pytest.fixture

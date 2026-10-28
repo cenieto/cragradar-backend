@@ -48,6 +48,7 @@ def authorize_tile_request(
     is_token_missing: bool = token is None
     if is_token_missing:
         return reject_as_unauthenticated()
+
     try:
         token_verifier.verify(str(token))
     except jwt.PyJWKClientConnectionError:
